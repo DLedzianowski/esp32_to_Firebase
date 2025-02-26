@@ -1,3 +1,10 @@
+// wysylanie -> dodac do FirebaseJson json
+// odbieranie ->dodac w reciveByWiFi if else i zmienna do struct RreadData
+
+// HA
+// sensor - dodac w configuration.yaml -> sensor: json_attributes
+// relay -  dodac configuration.yaml -> rest_command --> set_relay_01
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Firebase_ESP_Client.h>
@@ -11,12 +18,13 @@
 //#include <Wire.h>
 #include <Adafruit_INA219.h>
 
+// #define relay01PIN 14
 
 #define DEBUG 0  // 1 = Serial ON, 0 = Serial OFF
 #if DEBUG
   #define DEBUG_BEGIN(baud) Serial.begin(baud)
   #define DEBUG_PRINTLN(x) Serial.println(x)
-  #define DEBUG_PRINT(y) Serial.print(x)
+  #define DEBUG_PRINT(y) Serial.print(y)
   #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
 #else
   #define DEBUG_BEGIN(baud)
@@ -25,26 +33,15 @@
   #define DEBUG_PRINTF(...)
 #endif
 
-
-// wysylanie -> dodac do FirebaseJson json
-// odbieranie ->dodac w reciveByWiFi if else i zmienna do struct RreadData
-
-// HA
-// sensor - dodac w configuration.yaml -> sensor: json_attributes
-// relay -  dodac configuration.yaml -> rest_command --> set_relay_01
-
-
 // Firebase
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
 bool signupOK = false;
-
 // DS18B20
 #define DS18B20PIN 15
 OneWire oneWire(DS18B20PIN);
 DallasTemperature DS18B20sensors(&oneWire);
-
 // INA219
 Adafruit_INA219 ina219;
 
@@ -68,24 +65,22 @@ void configFirebase();
 
 
 void setup(){
+    DEBUG_BEGIN(115200);
     pinMode(LED_BUILTIN, OUTPUT);  // LED_BUILTIN
+
+    analogWrite(LED_BUILTIN, true);
+
     DS18B20sensors.begin();
     if (!ina219.begin()) {
         DEBUG_PRINTLN("Failed to find INA219 sensor.");
     }
 
-    DEBUG_BEGIN(115200);
     connectWiFi();
     configFirebase();
 }
 
 
 void loop(){
-    if (WiFi.status() != WL_CONNECTED) {
-        DEBUG_PRINTLN("WiFi off! restart...");
-        ESP.restart();
-    }
-
     updateSensors();
 
     // sending data
@@ -99,7 +94,12 @@ void loop(){
     // setting relays
     reciveByWiFi();
     analogWrite(LED_BUILTIN, ReadD.relay01);
+    
+    analogWrite(LED_BUILTIN, false);
 
+    DEBUG_PRINTLN("esp_sleep_enable_timer_wakeup.");
+    esp_sleep_enable_timer_wakeup(1*60*1000000);  // 1 min
+    esp_deep_sleep_start();
     delay(10000);
 }
 
@@ -124,6 +124,7 @@ void reciveByWiFi() {
             // saving data from json
             if (json.get(jsonData, "relay01") && jsonData.type == "boolean") {
                 ReadD.relay01 = jsonData.boolValue; // Zapis do struktury
+                DEBUG_PRINTLN("SUCCESS: 'relay01' loaded.");
             } else {
                 DEBUG_PRINTLN("FAILED: 'relay01' not found or wrong type.");
             }
@@ -144,6 +145,9 @@ void sendByWiFi(FirebaseJson &json){
         //setJSONAsync() -> dla wyslania w tle
         if (!Firebase.RTDB.setJSON(&fbdo, "ESPtoHA", &json)) {
             DEBUG_PRINTF("FAILED send: %s\n", fbdo.errorReason().c_str());
+        }
+        else{
+            DEBUG_PRINTLN("sendByWiFi SUCCESS");
         }
     }
     else{
@@ -176,14 +180,26 @@ void connectWiFi(){
 void configFirebase(){
     config.api_key = API_KEY;
     config.database_url = DATABASE_URL;
-    if(Firebase.signUp(&config, &auth, "", "")){
-        DEBUG_PRINTLN("signUp OK");
+    auth.user.email = USER_EMAIL;
+    auth.user.password = USER_EMAIL_PASSWORD;
+
+    DEBUG_PRINT("Firebase login");
+    //config.token_status_callback = tokenStatusCallback;
+    Firebase.begin(&config, &auth);
+    Firebase.reconnectWiFi(true);
+
+    int Firebase_try = 10;
+    while (!Firebase.ready() && Firebase_try < 10) {
+        DEBUG_PRINT(".");
+        delay(500);
+        Firebase_try++;
+    }
+
+    if (Firebase.ready()) {
+        DEBUG_PRINTLN(" SUCCES");
         signupOK = true;
-        Firebase.begin(&config, &auth);
-        Firebase.reconnectWiFi(true);
-        config.token_status_callback = tokenStatusCallback;
+    } else {
+        DEBUG_PRINTLN(" FAILED");
+        signupOK = false;
     }
-    else{
-        DEBUG_PRINTF("signUp failed: %s\n", config.signer.signupError.message.c_str());
-    }
-}
+} 
