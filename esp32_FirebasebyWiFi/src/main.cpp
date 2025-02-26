@@ -12,16 +12,27 @@
 #include <Adafruit_INA219.h>
 
 
+#define DEBUG 0  // 1 = Serial ON, 0 = Serial OFF
+#if DEBUG
+  #define DEBUG_BEGIN(baud) Serial.begin(baud)
+  #define DEBUG_PRINTLN(x) Serial.println(x)
+  #define DEBUG_PRINT(y) Serial.print(x)
+  #define DEBUG_PRINTF(...) Serial.printf(__VA_ARGS__)
+#else
+  #define DEBUG_BEGIN(baud)
+  #define DEBUG_PRINTLN(x)
+  #define DEBUG_PRINT(y)
+  #define DEBUG_PRINTF(...)
+#endif
+
+
 // wysylanie -> dodac do FirebaseJson json
 // odbieranie ->dodac w reciveByWiFi if else i zmienna do struct RreadData
 
 // HA
 // sensor - dodac w configuration.yaml -> sensor: json_attributes
 // relay -  dodac configuration.yaml -> rest_command --> set_relay_01
-  
 
-// z 05 trzeba to co jest na 30 dni - acces
-// moze czytanie zminnych bez opozninia
 
 // Firebase
 FirebaseData fbdo;
@@ -60,10 +71,10 @@ void setup(){
     pinMode(LED_BUILTIN, OUTPUT);  // LED_BUILTIN
     DS18B20sensors.begin();
     if (!ina219.begin()) {
-        Serial.println("Failed to find INA219 sensor.");
+        DEBUG_PRINTLN("Failed to find INA219 sensor.");
     }
 
-    Serial.begin(115200);
+    DEBUG_BEGIN(115200);
     connectWiFi();
     configFirebase();
 }
@@ -71,7 +82,7 @@ void setup(){
 
 void loop(){
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("WiFi off! restart...");
+        DEBUG_PRINTLN("WiFi off! restart...");
         ESP.restart();
     }
 
@@ -87,7 +98,7 @@ void loop(){
 
     // setting relays
     reciveByWiFi();
-    analogWrite(BUILTIN_LED, ReadD.relay01);
+    analogWrite(LED_BUILTIN, ReadD.relay01);
 
     delay(10000);
 }
@@ -114,17 +125,17 @@ void reciveByWiFi() {
             if (json.get(jsonData, "relay01") && jsonData.type == "boolean") {
                 ReadD.relay01 = jsonData.boolValue; // Zapis do struktury
             } else {
-                Serial.println("FAILED: 'relay01' not found or wrong type.");
+                DEBUG_PRINTLN("FAILED: 'relay01' not found or wrong type.");
             }
 
             //
             // DODAC IF ELSE z "nowa zmienna" z bazy danych
             //
         } else {
-            Serial.printf("FAILED READ: %s\n", fbdo.errorReason().c_str());
+            DEBUG_PRINTF("FAILED READ: %s\n", fbdo.errorReason().c_str());
         }
     } else {
-        Serial.println("Firebase not ready or sign up failed");
+        DEBUG_PRINTLN("Firebase not ready or sign up failed");
     }
 }
 
@@ -132,33 +143,33 @@ void sendByWiFi(FirebaseJson &json){
     if (Firebase.ready() && signupOK){
         //setJSONAsync() -> dla wyslania w tle
         if (!Firebase.RTDB.setJSON(&fbdo, "ESPtoHA", &json)) {
-            Serial.printf("FAILED send: %s\n", fbdo.errorReason().c_str());
+            DEBUG_PRINTF("FAILED send: %s\n", fbdo.errorReason().c_str());
         }
     }
     else{
-        Serial.println("Firebase not ready or sign up failed");
+        DEBUG_PRINTLN("Firebase not ready or sign up failed");
     }
 }
 
 void connectWiFi(){
-    Serial.print("Laczenie z WiFi: ");
-    Serial.println(WIFI_SSID);
+    DEBUG_PRINT("Laczenie z WiFi: ");
+    DEBUG_PRINTLN(WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     int retry = 0;
     while (WiFi.status() != WL_CONNECTED && retry < 20){
         delay(500);
-        Serial.print(".");
+        DEBUG_PRINT(".");
         retry++;
     }
 
     if (WiFi.status() != WL_CONNECTED){
-        Serial.print("\nNie udalo sie polaczyc z WiFi.");
+        DEBUG_PRINT("\nNie udalo sie polaczyc z WiFi.");
         ESP.restart();
     }
     else{
-        Serial.print("Polalaczono z WiFi! --- IP: ");
-        Serial.println(WiFi.localIP());
+        DEBUG_PRINT("Polalaczono z WiFi! --- IP: ");
+        DEBUG_PRINTLN(WiFi.localIP());
     }
 }
 
@@ -166,13 +177,13 @@ void configFirebase(){
     config.api_key = API_KEY;
     config.database_url = DATABASE_URL;
     if(Firebase.signUp(&config, &auth, "", "")){
-        Serial.println("signUp OK");
+        DEBUG_PRINTLN("signUp OK");
         signupOK = true;
         Firebase.begin(&config, &auth);
         Firebase.reconnectWiFi(true);
         config.token_status_callback = tokenStatusCallback;
     }
     else{
-        Serial.printf("signUp failed: %s\n", config.signer.signupError.message.c_str());
+        DEBUG_PRINTF("signUp failed: %s\n", config.signer.signupError.message.c_str());
     }
 }
