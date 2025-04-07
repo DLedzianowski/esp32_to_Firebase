@@ -15,10 +15,11 @@
 // Sensors lib
 #include <OneWire.h>
 #include <DallasTemperature.h>
-//#include <Wire.h>
-#include <Adafruit_INA219.h>
+#include <Wire.h>
+//#include <Adafruit_INA219.h>
+#include <Adafruit_BME280.h>
 
-// #define relay01PIN 14
+#define relay01PIN GPIO_NUM_4
 
 #define DEBUG 0  // 1 = Serial ON, 0 = Serial OFF
 #if DEBUG
@@ -43,7 +44,9 @@ bool signupOK = false;
 OneWire oneWire(DS18B20PIN);
 DallasTemperature DS18B20sensors(&oneWire);
 // INA219
-Adafruit_INA219 ina219;
+//Adafruit_INA219 ina219;
+// BME280
+Adafruit_BME280 bme280;
 
 
 struct SentData {
@@ -51,7 +54,10 @@ struct SentData {
     float voltage = 0.0;
     float current = 0.0;
     float power = 0.0;
-}SentD;
+    float bme280Temperature = 0.0;
+    float bme280Pressure = 0.0;
+    float bme280Humidity = 0.0;
+} SentD;
 struct RreadData {
     bool relay01 = false;
 }ReadD;
@@ -63,17 +69,18 @@ void sendByWiFi(FirebaseJson &json);
 void connectWiFi();
 void configFirebase();
 
-
 void setup(){
     DEBUG_BEGIN(115200);
-    pinMode(LED_BUILTIN, OUTPUT);  // LED_BUILTIN
-
-    analogWrite(LED_BUILTIN, true);
+    pinMode(relay01PIN, OUTPUT);
 
     DS18B20sensors.begin();
-    if (!ina219.begin()) {
-        DEBUG_PRINTLN("Failed to find INA219 sensor.");
+
+    if (!bme280.begin(BME280_ADDRESS_ALTERNATE)){
+        DEBUG_PRINTLN("Failed to find bme280 sensor.");
     }
+    // if (!ina219.begin()) {
+    //     DEBUG_PRINTLN("Failed to find INA219 sensor.");
+    // }
 
     connectWiFi();
     configFirebase();
@@ -85,17 +92,23 @@ void loop(){
 
     // sending data
     FirebaseJson json;
-    json.set("voltage_V", SentD.voltage);
-    json.set("current_mA", SentD.current);
-    json.set("power_mW", SentD.power);
+    // json.set("voltage_V", SentD.voltage);
+    // json.set("current_mA", SentD.current);
+    // json.set("power_mW", SentD.power);
     json.set("DS18B20temp", SentD.DS18B20temp);
+    json.set("bme280Temperature", SentD.bme280Temperature);
+    json.set("bme280Pressure", SentD.bme280Pressure);
+    json.set("bme280Humidity", SentD.bme280Humidity);
     sendByWiFi(json);
 
     // setting relays
     reciveByWiFi();
-    analogWrite(LED_BUILTIN, ReadD.relay01);
-    
-    analogWrite(LED_BUILTIN, false);
+    digitalWrite(relay01PIN, ReadD.relay01);
+    // RTC_GPIO SET
+    gpio_hold_dis(relay01PIN);
+    gpio_deep_sleep_hold_en();
+    gpio_hold_en(relay01PIN);
+    delay(100);
 
     DEBUG_PRINTLN("esp_sleep_enable_timer_wakeup.");
     esp_sleep_enable_timer_wakeup(1*60*1000000);  // 1 min
@@ -108,33 +121,59 @@ void updateSensors(){
     DS18B20sensors.requestTemperatures();
     SentD.DS18B20temp = DS18B20sensors.getTempCByIndex(0);
     SentD.DS18B20temp = round(SentD.DS18B20temp * 100) / 100.0;
+    DEBUG_PRINT("DS18B20temp");
+    DEBUG_PRINTLN(SentD.DS18B20temp);
+
+    // BME280
+    SentD.bme280Temperature = bme280.readTemperature();
+    DEBUG_PRINT("Temperature = ");
+    DEBUG_PRINT(SentD.bme280Temperature);
+    DEBUG_PRINTLN(" °C");
+    SentD.bme280Pressure = bme280.readPressure() / 100.0F;
+    DEBUG_PRINT("Pressure = ");
+    DEBUG_PRINT(SentD.bme280Pressure);
+    DEBUG_PRINTLN(" hPa");
+    SentD.bme280Humidity = bme280.readHumidity();
+    DEBUG_PRINT("Humidity = ");
+    DEBUG_PRINT(SentD.bme280Humidity);
+    DEBUG_PRINTLN(" %");
 
     // ina219
-    SentD.voltage = ina219.getBusVoltage_V();
-    SentD.current = ina219.getCurrent_mA();
-    SentD.power = ina219.getPower_mW();
+    // SentD.voltage = ina219.getBusVoltage_V();
+    // SentD.current = ina219.getCurrent_mA();
+    // SentD.power = ina219.getPower_mW();
 }
 
 void reciveByWiFi() {
     if (Firebase.ready() && signupOK) {
-        if (Firebase.RTDB.getJSON(&fbdo, "HAtoESP/")) {
-            FirebaseJson &json = fbdo.jsonObject();
-            FirebaseJsonData jsonData;
-            
-            // saving data from json
-            if (json.get(jsonData, "relay01") && jsonData.type == "boolean") {
-                ReadD.relay01 = jsonData.boolValue; // Zapis do struktury
-                DEBUG_PRINTLN("SUCCESS: 'relay01' loaded.");
-            } else {
-                DEBUG_PRINTLN("FAILED: 'relay01' not found or wrong type.");
-            }
+        uint8_t retry = 0;
+        while (retry<3) {
+            if (Firebase.RTDB.getJSON(&fbdo, "HAtoESP/")) {
+                FirebaseJson &json = fbdo.jsonObject();
+                FirebaseJsonData jsonData;
+                
+                // saving data from json
+                if (json.get(jsonData, "relay01") && jsonData.type == "boolean") {
+                    ReadD.relay01 = jsonData.boolValue; // Zapis do struktury
+                    DEBUG_PRINTLN("SUCCESS: 'relay01' loaded.");
+                    
+                }
+                else {
+                    DEBUG_PRINTLN("FAILED: 'relay01' not found or wrong type.");
+                }
 
-            //
-            // DODAC IF ELSE z "nowa zmienna" z bazy danych
-            //
-        } else {
-            DEBUG_PRINTF("FAILED READ: %s\n", fbdo.errorReason().c_str());
+                //
+                // DODAC IF ELSE z "nowa zmienna" z bazy danych
+                //
+                retry = 3; // saving data from json -> OK
+            } else {
+                DEBUG_PRINTF("FAILED READ: %s\n", fbdo.errorReason().c_str());
+                DEBUG_PRINTLN("Retrying...");
+                delay(500);
+                retry++;
+            }
         }
+        
     } else {
         DEBUG_PRINTLN("Firebase not ready or sign up failed");
     }
@@ -182,9 +221,10 @@ void configFirebase(){
     config.database_url = DATABASE_URL;
     auth.user.email = USER_EMAIL;
     auth.user.password = USER_EMAIL_PASSWORD;
+    //config.signer.test_mode = true; //
 
     DEBUG_PRINT("Firebase login");
-    //config.token_status_callback = tokenStatusCallback;
+    config.token_status_callback = tokenStatusCallback;
     Firebase.begin(&config, &auth);
     Firebase.reconnectWiFi(true);
 
